@@ -1,0 +1,116 @@
+diff --git a/tools/shermes/compile.cpp b/tools/shermes/compile.cpp
+index 4e6f6964b..4d7f2df82 100644
+--- a/tools/shermes/compile.cpp
++++ b/tools/shermes/compile.cpp
+@@ -12,6 +12,7 @@
+ #include "hermes/BCGen/SH/SH.h"
+ 
+ #include "llvh/ADT/ScopeExit.h"
++#include "llvh/Support/FileSystem.h"
+ #include "llvh/Support/Path.h"
+ #include "llvh/Support/Program.h"
+ #include "llvh/Support/Signals.h"
+@@ -113,6 +114,54 @@ struct CCCfg {
+   std::vector<std::string> hermesIncludePath;
+ };
+ 
++/// Return the root of the prebuilt toolchain containing this executable.
++///
++/// The release layout is:
++///   <root>/bin/shermes
++///   <root>/include/...
++///   <root>/lib/...
++///
++/// Resolve symlinks before walking up from bin so that users can safely put a
++/// symlink to shermes on PATH. SHERMES_TOOLCHAIN_ROOT is primarily useful to
++/// embedders and for diagnostics.
++static std::string getToolchainRoot() {
++  if (const char *overrideRoot = ::getenv("SHERMES_TOOLCHAIN_ROOT")) {
++    if (*overrideRoot)
++      return overrideRoot;
++  }
++
++  std::string executable =
++      llvh::sys::fs::getMainExecutable(nullptr, nullptr);
++  if (executable.empty())
++    return {};
++
++  llvh::SmallString<256> resolved;
++  if (llvh::sys::fs::real_path(executable, resolved))
++    resolved = executable;
++
++  llvh::sys::path::remove_filename(resolved);
++  llvh::sys::path::remove_filename(resolved);
++  return resolved.str().str();
++}
++
++static void populateToolchainPaths(CCCfg &cfg) {
++  std::string root = getToolchainRoot();
++  if (root.empty())
++    return;
++
++  llvh::SmallString<256> configInclude(root);
++  llvh::sys::path::append(configInclude, "include", "config");
++  cfg.hermesIncludePath.push_back(configInclude.str().str());
++
++  llvh::SmallString<256> include(root);
++  llvh::sys::path::append(include, "include");
++  cfg.hermesIncludePath.push_back(include.str().str());
++
++  llvh::SmallString<256> lib(root);
++  llvh::sys::path::append(lib, "lib");
++  cfg.hermesLibPath.push_back(lib.str().str());
++}
++
+ /// Populate CCCfg with overrides from the environment.
+ void populateCCCfg(CCCfg &cfg) {
+   auto init = [](std::string &res, const char *name, const char *defVal) {
+@@ -129,17 +178,26 @@ void populateCCCfg(CCCfg &cfg) {
+   init(cfg.ldflags, "LDFLAGS", "");
+   init(cfg.ldlibs, "LDLIBS", "");
+ 
+-  llvh::SmallVector<llvh::StringRef, 2> vec{};
+-  llvh::StringLiteral(SHERMES_CC_LIB_PATH)
+-      .split(vec, llvh::sys::EnvPathSeparator, -1, false);
+-  for (auto sr : vec)
+-    cfg.hermesLibPath.push_back(sr.str());
+-
+-  vec.clear();
+-  llvh::StringLiteral(SHERMES_CC_INCLUDE_PATH)
+-      .split(vec, llvh::sys::EnvPathSeparator, -1, false);
+-  for (auto sr : vec)
+-    cfg.hermesIncludePath.push_back(sr.str());
++  populateToolchainPaths(cfg);
++
++  // Keep the configured paths as a fallback for platforms on which the main
++  // executable cannot be located. Release builds intentionally configure
++  // these values as empty so they never capture the CI build directory.
++  if (cfg.hermesLibPath.empty()) {
++    llvh::SmallVector<llvh::StringRef, 2> vec{};
++    llvh::StringLiteral(SHERMES_CC_LIB_PATH)
++        .split(vec, llvh::sys::EnvPathSeparator, -1, false);
++    for (auto sr : vec)
++      cfg.hermesLibPath.push_back(sr.str());
++  }
++
++  if (cfg.hermesIncludePath.empty()) {
++    llvh::SmallVector<llvh::StringRef, 2> vec{};
++    llvh::StringLiteral(SHERMES_CC_INCLUDE_PATH)
++        .split(vec, llvh::sys::EnvPathSeparator, -1, false);
++    for (auto sr : vec)
++      cfg.hermesIncludePath.push_back(sr.str());
++  }
+ }
+ 
+ // Split arguments separated by whitespace and push them individually into
+@@ -332,6 +390,10 @@ bool invokeCC(
+       if (params.staticLink == ShermesCompileParams::StaticLink::on)
+         libParam += "_a";
+       args.emplace_back(std::move(libParam));
++#ifdef __APPLE__
++      if (params.staticLink == ShermesCompileParams::StaticLink::on)
++        args.emplace_back("-lboost_context");
++#endif
+     }
+ 
+     splitArgs(cfg.ldlibs, args);

@@ -1,0 +1,8 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates clang cmake file git libicu-dev \
+      libreadline-dev ninja-build perl pkg-config python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo

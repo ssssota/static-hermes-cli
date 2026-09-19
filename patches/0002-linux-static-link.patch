@@ -1,0 +1,37 @@
+diff --git a/tools/shermes/compile.cpp b/tools/shermes/compile.cpp
+--- a/tools/shermes/compile.cpp
++++ b/tools/shermes/compile.cpp
+@@ -359,6 +359,10 @@ bool invokeCC(
+         if (!params.noHermesLibs) {
+           args.emplace_back("-lshermes_console_a");
+         }
++#elif defined(__linux__)
++        if (!params.noHermesLibs) {
++          args.emplace_back("-lshermes_console_a");
++        }
+ #else
+         llvh::errs() << "Static linking unsupported on this platform\n";
+         return false;
+@@ -396,6 +400,22 @@ bool invokeCC(
+       if (params.staticLink == ShermesCompileParams::StaticLink::on)
+         args.emplace_back("-lboost_context");
+ #endif
++#ifdef __linux__
++      // GNU linkers resolve archives left to right; dependencies must follow
++      // the console and VM archives. Keep system libraries dynamically linked.
++      if (cfg.ldflags.empty() &&
++          params.staticLink == ShermesCompileParams::StaticLink::on) {
++        args.emplace_back("-ljsi");
++        args.emplace_back("-lboost_context");
++        args.emplace_back("-licui18n");
++        args.emplace_back("-licuuc");
++        args.emplace_back("-licudata");
++        args.emplace_back("-lstdc++");
++        args.emplace_back("-lm");
++        args.emplace_back("-ldl");
++        args.emplace_back("-pthread");
++      }
++#endif
+     }
+ 
+     splitArgs(cfg.ldlibs, args);

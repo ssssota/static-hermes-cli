@@ -1,0 +1,6 @@
+Copyright 2020-2025 Junekey Jeon
+
+The Dragonbox code included by Hermes is distributed under the Boost Software
+License, Version 1.0. A copy of that license is included in the adjacent
+boost/LICENSE_1_0.txt file in the release archive.
+
