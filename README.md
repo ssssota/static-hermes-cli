@@ -1,7 +1,7 @@
 # static-hermes-cli
 
 Prebuilt [Static Hermes](https://github.com/facebook/hermes/tree/static_h)
-toolchains for macOS and Linux. Each release includes `shermes`, headers, and
+toolchains for macOS, Linux, and Windows. Each release includes `shermes`, headers, and
 static libraries for compiling JavaScript to native executables.
 
 ## Supported platforms
@@ -12,6 +12,8 @@ static libraries for compiling JavaScript to native executables.
 | macOS 13 or later | Intel | `darwin-x64` |
 | Ubuntu 24.04 | ARM64 | `linux-arm64` |
 | Ubuntu 24.04 | x86-64 | `linux-x64` |
+| Windows 10/11 (experimental) | x86-64 | `windows-x64` |
+| Windows 11 (experimental) | ARM64 | `windows-arm64` |
 
 Linux packages target glibc 2.39 and ICU 74, not musl or Alpine Linux. Install
 the runtime dependencies before running `shermes` on Ubuntu 24.04:
@@ -20,6 +22,9 @@ the runtime dependencies before running `shermes` on Ubuntu 24.04:
 sudo apt-get update
 sudo apt-get install libicu74 libstdc++6
 ```
+
+Windows packages require the Microsoft Visual C++ Redistributable for their
+architecture (x64 or ARM64) and use Windows' built-in ICU.
 
 ## Installation
 
@@ -64,6 +69,11 @@ Keep the entire extracted directory together: `shermes` locates `include/` and
 `lib/` relative to its executable. You can move the directory or symlink
 `bin/shermes` onto your PATH.
 
+On Windows, extract the `windows-x64.tar.gz` or `windows-arm64.tar.gz` archive
+matching your CPU with `tar -xzf`, verify its
+SHA-256 with `Get-FileHash`, and add the extracted `bin` directory to PATH.
+The executable is `shermes.exe`; the entire extracted directory must stay together.
+
 ## Usage
 
 Create a JavaScript file:
@@ -85,6 +95,10 @@ To compile an object file or native executable, install a C compiler:
 
 - **macOS:** Xcode or Command Line Tools (`xcode-select --install`).
 - **Ubuntu 24.04:** `sudo apt-get install clang build-essential libicu-dev`.
+- **Windows:** install LLVM/Clang and Visual Studio C++ Build Tools for your
+  architecture (x64 or ARM64), with a Windows SDK. Run from a matching Developer
+  PowerShell with `clang.exe` on PATH.
+  Use `-o hello.exe` and run `./hello.exe` for the executable example below.
 
 ```sh
 shermes -O -c -o hello.o hello.js
@@ -100,6 +114,12 @@ This does not produce a fully static executable. macOS binaries still depend on
 system libraries and frameworks; Linux binaries depend on glibc, libstdc++,
 libgcc_s, and ICU. macOS packages are ad-hoc signed, not Developer ID signed or
 notarized.
+
+Windows links the Hermes libraries statically but still depends on the Microsoft
+C/C++ runtime and Windows system DLLs. Generated C uses Clang's MSVC target and
+the dynamic CRT (`/MD` equivalent); MinGW libraries are not interchangeable.
+Windows packages are unsigned. Use explicit output names ending in `.exe` for
+executables and `.obj` for object files.
 
 ## Package contents
 
@@ -120,6 +140,9 @@ static-hermes-<version>-<platform>/
 
 `manifest.json` records the Hermes commit, platform, and build environment.
 Each release's notes link directly to its upstream Hermes commit.
+
+Windows packages use `bin/shermes.exe` and `hermesvm_a.lib`, `jsi.lib`,
+`shermes_console_a.lib`, and `boost_context.lib` in `lib/`.
 
 ## Contributing
 

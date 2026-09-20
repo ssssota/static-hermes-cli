@@ -64,6 +64,43 @@ For a native Ubuntu 24.04 build, install the dependencies listed in
 [docker/Dockerfile.linux](docker/Dockerfile.linux), then run `build.sh`,
 `package.sh`, and `test-package.sh` as above, using the matching Linux archive.
 
+### Windows x64 / ARM64 (experimental)
+
+Install Visual Studio 2022 or later with the C++ build tools for the host's
+architecture (x64 or ARM64) and a Windows
+SDK, LLVM/Clang, Ninja, Python 3, Git, and CMake. The build script can use the
+CMake bundled with Visual Studio when it is not on PATH. Run with PowerShell 7:
+
+```powershell
+./scripts/build-windows.ps1
+./scripts/package-windows.ps1
+./scripts/test-package-windows.ps1 dist/static-hermes-dev-windows-x64.tar.gz
+```
+
+On an ARM64 host, use `dist/static-hermes-dev-windows-arm64.tar.gz` for the test.
+The scripts detect the host architecture and initialize the corresponding
+Visual Studio development environment automatically. `PLATFORM`, when set to
+`windows-x64` or `windows-arm64`, must match the host; cross builds are not supported.
+The compiler and libraries are built using MSVC; generated C is compiled with
+`clang.exe` with an explicit MSVC target triple and dynamic CRT. Windows' built-in
+ICU is used. ARM64 uses Boost.Context's `winfib` implementation, matching the
+upstream Windows ARM64 CI; x64 uses `fcontext`.
+N-API and the upstream test suite are disabled for this CLI build; the Windows
+package test verifies C/IR output, object compilation, native executables, Unicode,
+exceptions, PE architecture, DLL dependencies, and relocation into a directory
+containing spaces and Japanese characters.
+
+Windows output defaults to `.build/windows-<architecture>/` and `dist/`. `BUILD_ROOT`,
+`DIST_DIR`, `BUILD_JOBS`, `PACKAGE_VERSION`, `CMAKE_BIN`, and `PYTHON_BIN` can be
+set through `$env:`. After changing patches or the Hermes revision, use a new
+`BUILD_ROOT` or remove the existing Windows build directory before rebuilding.
+Windows does not implement the Unix scripts' `CLEAN` option.
+
+Install the Microsoft Visual C++ Redistributable matching the package's
+architecture on machines that run the
+package or generated executables. Distribution does not bundle Microsoft DLLs.
+MinGW and shared-library execution are outside this Windows scope.
+
 ### Build settings
 
 Use `BUILD_ROOT` and `DIST_DIR` to change output locations, `BUILD_JOBS` to set
@@ -95,6 +132,42 @@ Run the relevant build and package tests before proposing changes to scripts or
 patches. Preserve relative header/library lookup so packages remain relocatable.
 Shared Hermes distribution, lean VM packages, fully static Linux binaries, and
 musl builds are outside the current scope.
+
+### CI runner selection
+
+Builds use standard native runners with explicit OS/toolchain labels. The runner
+selection was reviewed against the
+[official image list](https://github.com/actions/runner-images#available-images)
+on 2026-09-20:
+
+| Platform / job | Runner | Build jobs | Reason |
+| --- | --- | --- | --- |
+| macOS ARM64 | `macos-15` | 3 | Keeps Xcode 16.4 / SDK 15.5; matches the standard runner's 3 CPUs and 7 GB RAM. |
+| macOS x64 | `macos-15-intel` | 4 | Keeps the same Xcode and SDK on native Intel hardware. |
+| Linux ARM64 | `ubuntu-24.04-arm` | 4 | Native Docker builds for the Ubuntu 24.04 distribution baseline. |
+| Linux x64 | `ubuntu-24.04` | 4 | Same distribution baseline and Docker build environment. |
+| Windows ARM64 | `windows-11-vs2026-arm` | 4 | Native ARM64 builds and execution with Visual Studio 2026. |
+| Windows x64 | `windows-2025-vs2026` | 4 | Current server image with an explicit Visual Studio 2026 label. |
+| Metadata, release, Hermes update | `ubuntu-slim` | — | Short Git/Node/GitHub CLI jobs; no compilation or Docker, within the 15-minute limit. |
+
+The macOS 15 images still include our pinned Xcode 16.4, whereas macOS 26 uses
+Xcode 26+. Moving macOS therefore requires a separate toolchain upgrade and
+compatibility validation. Ubuntu 26.04 images are currently preview and provide
+no benefit to the existing Ubuntu 24.04 container build.
+
+The Windows ARM64 VS 2026 image is
+[generally available](https://github.com/actions/runner-images/issues/14592),
+even though the top-level image table still marks it as preview. Using its
+explicit label avoids the
+[`windows-11-arm` migration](https://github.com/actions/runner-images/issues/14602)
+between VS versions. Labels do not pin weekly image updates: build manifests
+record the actual Visual Studio and SDK versions.
+
+The parallelism values match the
+[standard public-repository runner resources](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Private repositories have different CPU/RAM allocations; reduce the matrix's
+`build_jobs` if moving this workflow to a private repository. Larger paid runners
+are not required by this configuration.
 
 ## Update Hermes
 
@@ -135,8 +208,8 @@ The optional `version` input uses `vYYYY.M.D`, without zero-padded months or day
 If omitted, the workflow uses the current date in Japan time. The tag and release
 title are identical; archive versions omit the leading `v`.
 
-The workflow builds and tests macOS and Linux packages for arm64 and x64 on
-native runners. Linux uses the same Docker script as local development.
+The workflow builds and tests macOS, Linux, and Windows packages for arm64 and
+x64 on native runners. Linux uses the same Docker script as local development.
 Metadata, publishing, and Hermes-update jobs use `ubuntu-slim`.
 
 Once all builds pass, the workflow tags the exact parent-repository commit that

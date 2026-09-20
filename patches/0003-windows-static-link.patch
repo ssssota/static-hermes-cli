@@ -1,0 +1,51 @@
+diff --git a/tools/shermes/compile.cpp b/tools/shermes/compile.cpp
+--- a/tools/shermes/compile.cpp
++++ b/tools/shermes/compile.cpp
+@@ -265,6 +265,10 @@ bool invokeCC(
+     // means that unrelated types may alias in our code, and we must disable
+     // strict aliasing.
+     args.emplace_back("-fno-strict-aliasing");
++#ifdef _WIN32
++    args.emplace_back("-fms-runtime-lib=dll");
++    args.emplace_back("-DSHERMES_EXPORT=");
++#endif
+     // Avoid arbitrary UB on signed integer and pointer overflow.
+     args.emplace_back("-fno-strict-overflow");
+     for (llvh::StringRef option : params.extraCCOptions) {
+@@ -363,6 +367,10 @@ bool invokeCC(
+         if (!params.noHermesLibs) {
+           args.emplace_back("-lshermes_console_a");
+         }
++#elif defined(_WIN32)
++        if (!params.noHermesLibs) {
++          args.emplace_back("-lshermes_console_a");
++        }
+ #else
+         llvh::errs() << "Static linking unsupported on this platform\n";
+         return false;
+@@ -379,7 +387,7 @@ bool invokeCC(
+         }
+       }
+ 
+-#ifndef __APPLE__
++#if !defined(__APPLE__) && !defined(_WIN32)
+       // -lm is needed in both compilation modes because it is directly used by
+       // the shermes C output.
+       args.emplace_back("-lm");
+@@ -418,5 +426,16 @@ bool invokeCC(
+     }
+ 
++#ifdef _WIN32
++    if (!params.noHermesLibs &&
++        params.staticLink == ShermesCompileParams::StaticLink::on) {
++      args.emplace_back("-Wl,/nodefaultlib:libcmt");
++      args.emplace_back("-ljsi");
++      args.emplace_back("-lboost_context");
++      args.emplace_back("-licuuc");
++      args.emplace_back("-licuin");
++      args.emplace_back("-lwinmm");
++    }
++#endif
+     splitArgs(cfg.ldlibs, args);
+   }
+   args.emplace_back("-o");
