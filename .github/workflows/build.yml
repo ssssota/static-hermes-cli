@@ -98,21 +98,30 @@ jobs:
         include:
           - platform: darwin-arm64
             runner: macos-15
+            build_jobs: 3
           - platform: darwin-x64
             runner: macos-15-intel
+            build_jobs: 4
           - platform: linux-arm64
             runner: ubuntu-24.04-arm
             docker_platform: linux/arm64
+            build_jobs: 4
           - platform: linux-x64
             runner: ubuntu-24.04
             docker_platform: linux/amd64
+            build_jobs: 4
           - platform: windows-x64
-            runner: windows-2022
+            runner: windows-2025-vs2026
+            build_jobs: 4
+          - platform: windows-arm64
+            runner: windows-11-vs2026-arm
+            build_jobs: 4
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
       STATIC_HERMES_RELEASE_BUILD: "1"
       PACKAGE_VERSION: ${{ needs.metadata.outputs.version }}
+      BUILD_JOBS: ${{ matrix.build_jobs }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -124,7 +133,6 @@ jobs:
         if: runner.os == 'macOS'
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-          BUILD_JOBS: "4"
         run: ./scripts/build.sh
 
       - name: Package toolchain
@@ -141,16 +149,17 @@ jobs:
         if: runner.os == 'Linux'
         env:
           DOCKER_PLATFORM: ${{ matrix.docker_platform }}
-          BUILD_JOBS: "4"
         run: ./scripts/build-linux.sh
 
       - name: Build and test Windows toolchain
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: |
           ./scripts/build-windows.ps1
           ./scripts/package-windows.ps1
-          ./scripts/test-package-windows.ps1 "dist/static-hermes-$env:PACKAGE_VERSION-windows-x64.tar.gz"
+          ./scripts/test-package-windows.ps1 "dist/static-hermes-$env:PACKAGE_VERSION-$env:PLATFORM.tar.gz"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7

@@ -2,25 +2,15 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$env:VSLANG = '1033'
+. "$PSScriptRoot/windows-common.ps1"
+$configuration = Get-WindowsBuildConfiguration
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$buildRoot = if ($env:BUILD_ROOT) { $env:BUILD_ROOT } else { Join-Path $repoRoot '.build/windows-x64' }
+$buildRoot = if ($env:BUILD_ROOT) { $env:BUILD_ROOT } else { Join-Path $repoRoot ".build/$($configuration.Platform)" }
 $buildRoot = [IO.Path]::GetFullPath($buildRoot)
 $sourceDir = Join-Path $buildRoot 'hermes-src'
 $buildDir = Join-Path $buildRoot 'hermes-build'
 
-function Invoke-Checked {
-  param([string]$Command, [string[]]$Arguments)
-  & $Command @Arguments
-  if ($LASTEXITCODE -ne 0) { throw "$Command failed with exit code $LASTEXITCODE" }
-}
-
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-if (!(Test-Path $vswhere)) { throw 'Visual Studio with the C++ build tools is required.' }
-$vsPath = & $vswhere -latest -version '[17.0,)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-if (!$vsPath) { throw 'Visual Studio 2022 or later with C++ x64 build tools is required.' }
-Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
-Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=amd64 -host_arch=amd64'
+$vsPath = Initialize-WindowsToolchain $configuration
 
 $cmake = if ($env:CMAKE_BIN) { $env:CMAKE_BIN } elseif (Get-Command cmake -ErrorAction SilentlyContinue) { 'cmake' } else {
   Join-Path $vsPath 'Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe'
@@ -34,7 +24,7 @@ Invoke-Checked clang @('--version')
 $revision = & git -C (Join-Path $repoRoot 'hermes') rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Initialize the Hermes submodule first.' }
 $patches = @(Get-ChildItem (Join-Path $repoRoot 'patches/*.patch') | Sort-Object Name)
-$fingerprint = "$revision`n" + (($patches | Get-FileHash -Algorithm SHA256).Hash -join "`n")
+$fingerprint = "$($configuration.Platform)`n$revision`n" + (($patches | Get-FileHash -Algorithm SHA256).Hash -join "`n")
 New-Item -ItemType Directory -Force $buildRoot | Out-Null
 if (Test-Path $sourceDir) {
   $stamp = Join-Path $sourceDir '.static-hermes-source'
@@ -64,13 +54,18 @@ Invoke-Checked $cmake @(
   '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl',
   '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL', '-DCMAKE_DISABLE_FIND_PACKAGE_ICU=ON',
   '-DHERMES_ENABLE_NAPI=OFF', '-DHERMES_ENABLE_TEST_SUITE=OFF',
+  "-DBOOST_CONTEXT_ARCHITECTURE=$($configuration.BoostArchitecture)",
+  "-DBOOST_CONTEXT_IMPLEMENTATION=$($configuration.BoostImplementation)",
   "-DPython_EXECUTABLE=$((Get-Command $python).Source)",
-  '-DSHERMES_CC=clang', '-DSHERMES_CC_INCLUDE_PATH=', '-DSHERMES_CC_LIB_PATH='
+  '-DSHERMES_CC=clang', "-DSHERMES_CC_SYSCFLAGS=--target=$($configuration.ClangTarget)",
+  '-DSHERMES_CC_INCLUDE_PATH=', '-DSHERMES_CC_LIB_PATH='
 )
 Invoke-Checked $cmake @('--build', $buildDir, '--target', 'shermes', 'hermesvm_a', 'shermes_console_a', 'jsi', '--parallel', $jobs)
 @{
   hermesRevision = $revision
-  platform = 'windows-x64'
+  platform = $configuration.Platform
+  clangTarget = $configuration.ClangTarget
+  boostContextImplementation = $configuration.BoostImplementation
   visualStudioVersion = $env:VisualStudioVersion
   windowsSDKVersion = $env:WindowsSDKVersion
   compilerVersion = $env:VCToolsVersion

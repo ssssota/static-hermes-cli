@@ -2,8 +2,10 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/windows-common.ps1"
+$configuration = Get-WindowsBuildConfiguration
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$buildRoot = if ($env:BUILD_ROOT) { $env:BUILD_ROOT } else { Join-Path $repoRoot '.build/windows-x64' }
+$buildRoot = if ($env:BUILD_ROOT) { $env:BUILD_ROOT } else { Join-Path $repoRoot ".build/$($configuration.Platform)" }
 $buildRoot = [IO.Path]::GetFullPath($buildRoot)
 $sourceDir = Join-Path $buildRoot 'hermes-src'
 $buildDir = Join-Path $buildRoot 'hermes-build'
@@ -12,8 +14,8 @@ $distDir = [IO.Path]::GetFullPath($distDir)
 $version = if ($env:PACKAGE_VERSION) { $env:PACKAGE_VERSION } else { 'dev' }
 if ($version -notmatch '\A[0-9A-Za-z._-]+\z') { throw 'Invalid PACKAGE_VERSION.' }
 $metadata = Get-Content (Join-Path $buildDir 'static-hermes-build.json') -Raw | ConvertFrom-Json
-if ($metadata.platform -ne 'windows-x64') { throw 'Expected a Windows x64 build.' }
-$packageName = "static-hermes-$version-windows-x64"
+if ($metadata.platform -ne $configuration.Platform) { throw "Expected a $($configuration.Platform) build." }
+$packageName = "static-hermes-$version-$($configuration.Platform)"
 $stage = Join-Path $distDir $packageName
 $archive = "$stage.tar.gz"
 New-Item -ItemType Directory -Force $distDir | Out-Null
@@ -69,6 +71,8 @@ foreach ($entry in $licenses.GetEnumerator()) {
   visualStudioVersion = $metadata.visualStudioVersion
   windowsSDKVersion = $metadata.windowsSDKVersion
   compilerVersion = $metadata.compilerVersion
+  clangTarget = $metadata.clangTarget
+  boostContextImplementation = $metadata.boostContextImplementation
   runtimeLibrary = 'MD'
 } | ConvertTo-Json | Set-Content "$stage/manifest.json" -Encoding utf8
 & tar -czf $archive -C $distDir $packageName

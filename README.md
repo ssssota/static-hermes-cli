@@ -13,6 +13,7 @@ static libraries for compiling JavaScript to native executables.
 | Ubuntu 24.04 | ARM64 | `linux-arm64` |
 | Ubuntu 24.04 | x86-64 | `linux-x64` |
 | Windows 10/11 (experimental) | x86-64 | `windows-x64` |
+| Windows 11 (experimental) | ARM64 | `windows-arm64` |
 
 Linux packages target glibc 2.39 and ICU 74, not musl or Alpine Linux. Install
 the runtime dependencies before running `shermes` on Ubuntu 24.04:
@@ -22,8 +23,8 @@ sudo apt-get update
 sudo apt-get install libicu74 libstdc++6
 ```
 
-Windows packages require the Microsoft Visual C++ x64 Redistributable and use
-Windows' built-in ICU. Windows ARM64 is not currently packaged.
+Windows packages require the Microsoft Visual C++ Redistributable for their
+architecture (x64 or ARM64) and use Windows' built-in ICU.
 
 ## Installation
 
@@ -68,7 +69,8 @@ Keep the entire extracted directory together: `shermes` locates `include/` and
 `lib/` relative to its executable. You can move the directory or symlink
 `bin/shermes` onto your PATH.
 
-On Windows, extract the `windows-x64.tar.gz` archive with `tar -xzf`, verify its
+On Windows, extract the `windows-x64.tar.gz` or `windows-arm64.tar.gz` archive
+matching your CPU with `tar -xzf`, verify its
 SHA-256 with `Get-FileHash`, and add the extracted `bin` directory to PATH.
 The executable is `shermes.exe`; the entire extracted directory must stay together.
 
@@ -93,8 +95,9 @@ To compile an object file or native executable, install a C compiler:
 
 - **macOS:** Xcode or Command Line Tools (`xcode-select --install`).
 - **Ubuntu 24.04:** `sudo apt-get install clang build-essential libicu-dev`.
-- **Windows x64:** install LLVM/Clang and Visual Studio C++ Build Tools with a
-  Windows SDK. Run from an x64 Developer PowerShell with `clang.exe` on PATH.
+- **Windows:** install LLVM/Clang and Visual Studio C++ Build Tools for your
+  architecture (x64 or ARM64), with a Windows SDK. Run from a matching Developer
+  PowerShell with `clang.exe` on PATH.
   Use `-o hello.exe` and run `./hello.exe` for the executable example below.
 
 ```sh

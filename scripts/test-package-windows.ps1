@@ -2,7 +2,8 @@
 param([Parameter(Mandatory)][string]$Archive)
 
 $ErrorActionPreference = 'Stop'
-$env:VSLANG = '1033'
+. "$PSScriptRoot/windows-common.ps1"
+$configuration = Get-WindowsBuildConfiguration
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $archivePath = (Resolve-Path -LiteralPath $Archive).Path
 $expected = (Get-Content "$archivePath.sha256" -Raw).Trim() -split '\s+', 2
@@ -10,17 +11,7 @@ if ($expected[1] -ne [IO.Path]::GetFileName($archivePath) -or
     (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash -ne $expected[0]) {
   throw 'Archive checksum mismatch.'
 }
-function Invoke-Checked {
-  param([string]$Command, [string[]]$Arguments)
-  & $Command @Arguments
-  if ($LASTEXITCODE -ne 0) { throw "$Command failed with exit code $LASTEXITCODE" }
-}
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-if (!(Test-Path $vswhere)) { throw 'Visual Studio with the C++ build tools is required.' }
-$vsPath = & $vswhere -latest -version '[17.0,)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-if (!$vsPath) { throw 'Visual Studio 2022 or later with C++ x64 build tools is required.' }
-Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
-Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=amd64 -host_arch=amd64'
+$null = Initialize-WindowsToolchain $configuration
 foreach ($command in @('clang', 'dumpbin', 'tar')) {
   if (!(Get-Command $command -ErrorAction SilentlyContinue)) { throw "Required command not found: $command" }
 }
@@ -34,6 +25,10 @@ try {
   $relocated = Join-Path $work 'relocated toolchain 日本語'
   if ($packages[0].Parent.FullName -ne (Resolve-Path $work).Path) { throw 'Unexpected package path.' }
   Move-Item -LiteralPath $packages[0].FullName -Destination $relocated
+  $manifest = Get-Content "$relocated/manifest.json" -Raw | ConvertFrom-Json
+  if ($manifest.platform -ne $configuration.Platform -or $manifest.hermesRevision -notmatch '^[0-9a-f]{40}$') {
+    throw 'Invalid manifest or package architecture does not match this host.'
+  }
   $shermes = Join-Path $relocated 'bin/shermes.exe'
   $env:PATH = "$relocated/bin;$originalPath"
   $outputDir = Join-Path $work 'output'
@@ -48,6 +43,10 @@ try {
   Invoke-Checked $shermes @('-O', '-emit-c', '-o', "$outputDir/hello.c", "$repoRoot/tests/hello.js")
   Invoke-Checked $shermes @('-O', '-dump-ir', "$repoRoot/tests/hello.js") | Set-Content "$outputDir/hello.ir"
   Invoke-Checked 'shermes.exe' @('-O', '-c', '-o', "$outputDir/hello.obj", "$repoRoot/tests/hello.js")
+  $objectHeaders = Invoke-Checked dumpbin @('/headers', "$outputDir/hello.obj")
+  if (!($objectHeaders -match "$($configuration.Machine) machine")) {
+    throw "Expected a $($configuration.Architecture) object file."
+  }
   foreach ($test in @('hello', 'runtime')) {
     $executable = "$outputDir/$test.exe"
     Invoke-Checked $shermes @('-O', '-static-link', '-o', $executable, "$repoRoot/tests/$test.js")
@@ -62,7 +61,9 @@ try {
   }
   foreach ($executable in @($shermes, "$outputDir/hello.exe", "$outputDir/runtime.exe")) {
     $headers = Invoke-Checked dumpbin @('/headers', $executable)
-    if (!($headers -match '8664 machine')) { throw "Expected x64 executable: $executable" }
+    if (!($headers -match "$($configuration.Machine) machine")) {
+      throw "Expected $($configuration.Architecture) executable: $executable"
+    }
     $dependencies = Invoke-Checked dumpbin @('/dependents', $executable)
     foreach ($line in $dependencies) {
       if ($line -match '^\s+(\S+\.dll)\s*$') {
@@ -74,10 +75,6 @@ try {
         }
       }
     }
-  }
-  $manifest = Get-Content "$relocated/manifest.json" -Raw | ConvertFrom-Json
-  if ($manifest.platform -ne 'windows-x64' -or $manifest.hermesRevision -notmatch '^[0-9a-f]{40}$') {
-    throw 'Invalid manifest.'
   }
   Write-Output 'Package passed relocation, compile, static-link, and runtime tests.'
 } finally {
