@@ -5,20 +5,93 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag (vYYYY.M.D); empty = today in Asia/Tokyo"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: build-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && 'release' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
+  metadata:
+    name: Select build and release version
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      commit: ${{ steps.metadata.outputs.commit }}
+      hermes_revision: ${{ steps.metadata.outputs.hermes_revision }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select version and source commits
+        id: metadata
+        uses: actions/github-script@v8
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        with:
+          script: |
+            let version;
+            let tag = '';
+            if (context.eventName === 'workflow_dispatch') {
+              const requested = process.env.REQUESTED_VERSION || '';
+              if (requested) {
+                const match = /^v([0-9]{4})\.([1-9][0-9]?)\.([1-9][0-9]?)$/.exec(requested);
+                if (!match || match[0] !== requested) {
+                  throw new Error('Expected vYYYY.M.D, without zero padding (e.g. v2026.9.20)');
+                }
+                const [, year, month, day] = match;
+                const date = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T00:00:00Z`);
+                if (Number(year) < 1 || date.getUTCFullYear() !== Number(year) ||
+                    date.getUTCMonth() + 1 !== Number(month) || date.getUTCDate() !== Number(day)) {
+                  throw new Error(`Invalid release date: ${requested}`);
+                }
+                version = requested.slice(1);
+              } else {
+                const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+                  timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric',
+                }).formatToParts(new Date()).map(({ type, value }) => [type, value]));
+                version = `${parts.year}.${parts.month}.${parts.day}`;
+              }
+              tag = `v${version}`;
+            } else {
+              version = `0.0.0-dev.${context.runNumber}`;
+            }
+
+            const git = async (...args) => {
+              const { stdout } = await exec.getExecOutput('git', args, { silent: true });
+              return stdout.trim();
+            };
+            const commit = await git('rev-parse', 'HEAD');
+            const hermesRevision = await git('rev-parse', 'HEAD:hermes');
+            if (tag) {
+              const refs = await git('ls-remote', '--tags', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`);
+              const targets = new Map(refs.split('\n').filter(Boolean).map(line => {
+                const [sha, ref] = line.split(/\s+/);
+                return [ref, sha];
+              }));
+              const target = targets.get(`refs/tags/${tag}^{}`) ?? targets.get(`refs/tags/${tag}`);
+              if (target !== undefined && target !== commit) {
+                throw new Error(`${tag} already points to a different commit; choose another date`);
+              }
+            }
+
+            core.setOutput('version', version);
+            core.setOutput('tag', tag);
+            core.setOutput('commit', commit);
+            core.setOutput('hermes_revision', hermesRevision);
+
   build:
     name: ${{ matrix.platform }}
+    needs: metadata
     strategy:
       fail-fast: false
       matrix:
@@ -37,20 +110,13 @@ jobs:
     timeout-minutes: 120
     env:
       STATIC_HERMES_RELEASE_BUILD: "1"
+      PACKAGE_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ needs.metadata.outputs.commit }}
           submodules: true
-
-      - name: Select package version
-        shell: bash
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "PACKAGE_VERSION=${GITHUB_REF_NAME#v}" >>"${GITHUB_ENV}"
-          else
-            echo "PACKAGE_VERSION=0.0.0-dev.${GITHUB_RUN_NUMBER}" >>"${GITHUB_ENV}"
-          fi
 
       - name: Build toolchain
         if: runner.os == 'macOS'
@@ -87,13 +153,19 @@ jobs:
 
   release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    needs: [metadata, build]
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: write
     steps:
+      - name: Check out release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+
       - name: Download build artifacts
         uses: actions/download-artifact@v7
         with:
@@ -106,12 +178,27 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+          HERMES_REVISION: ${{ needs.metadata.outputs.hermes_revision }}
         run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" --clobber dist/*.tar.gz dist/SHA256SUMS
+          # Check again after the build, in case another run created the tag.
+          refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
+          target="$(awk '$2 !~ /\^\{\}$/ { plain=$1 } $2 ~ /\^\{\}$/ { peeled=$1 } END { print peeled ? peeled : plain }' <<<"${refs}")"
+          if [[ -n "${target}" && "${target}" != "${RELEASE_COMMIT}" ]]; then
+            echo "${RELEASE_TAG} already points to a different commit." >&2
+            exit 1
+          fi
+
+          notes="${RUNNER_TEMP}/release-notes.md"
+          printf 'https://github.com/facebook/hermes/commit/%s\n' "${HERMES_REVISION}" >"${notes}"
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" --clobber dist/*.tar.gz dist/SHA256SUMS
+            gh release edit "${RELEASE_TAG}" --title "${RELEASE_TAG}" --notes-file "${notes}"
           else
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${RELEASE_TAG}" \
               dist/*.tar.gz dist/SHA256SUMS \
-              --generate-notes \
-              --title "${GITHUB_REF_NAME}"
+              --target "${RELEASE_COMMIT}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file "${notes}"
           fi

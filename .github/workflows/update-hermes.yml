@@ -1,0 +1,45 @@
+name: Update Hermes
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 09:00 Asia/Tokyo
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-hermes
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    steps:
+      - name: Check out default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          submodules: true
+
+      - name: Update Hermes submodule
+        id: hermes
+        run: |
+          git submodule update --remote --checkout hermes
+          echo "revision=$(git -C hermes rev-parse HEAD)" >>"${GITHUB_OUTPUT}"
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.HERMES_UPDATE_TOKEN || github.token }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/update-hermes
+          add-paths: hermes
+          commit-message: "chore: update Hermes to ${{ steps.hermes.outputs.revision }}"
+          title: "chore: update Hermes"
+          body: |
+            Update the Hermes submodule to the latest `static_h` commit.
+
+            https://github.com/facebook/hermes/commit/${{ steps.hermes.outputs.revision }}

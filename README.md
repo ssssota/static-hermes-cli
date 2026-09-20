@@ -129,7 +129,12 @@ Ubuntu 24.04 上で直接ビルドする場合は、`docker/Dockerfile.linux` �
 
 ## リリース
 
-`v` で始まるtagをpushすると、GitHub Actionsが macOS / Linux の arm64 / x64 を
+Actions の **Build and release** を `workflow_dispatch` で実行するとリリースします。
+`version` は `v2026.9.20` の形式で指定し、未指定なら日本時間の実行日を使います。
+月・日はゼロ埋めしません。タグとリリースタイトルはともに `v2026.9.20`、
+アーカイブのバージョンは `2026.9.20` になります。
+
+GitHub Actionsが macOS / Linux の arm64 / x64 を
 それぞれネイティブrunnerでビルドします。Linux job はローカルと同じ `build-linux.sh` を
 Docker 上で実行します。各アーカイブは次を実行してからReleaseへ公開されます。
 
@@ -140,9 +145,36 @@ Docker 上で実行します。各アーカイブは次を実行してからRele
 - アーキテクチャ、SHA-256、macOS の ad-hocコード署名を確認
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+gh workflow run build.yml --ref main -f version=v2026.9.20
 ```
+
+全プラットフォームのテスト成功後、実際にビルドした親リポジトリのcommitにタグを作成します。
+Release note は `https://github.com/facebook/hermes/commit/<commit SHA>` のみで、
+ビルドに使用したHermesのcommitへのpermanent linkです。自動生成の変更履歴は使いません。
+同じタグ・同じcommitでの再実行はアセット・タイトル・noteを更新します。
+同じ日付のタグが別commitを指している場合はエラーにして、タグを移動しません。
+
+tag push ではworkflowを起動しません。`main` へのpushとpull requestはビルド・検証のみ行い、
+リリースは作成しません。
+
+## Hermesの更新
+
+**Update Hermes** は毎日09:00（日本時間）と `workflow_dispatch` で実行します。
+`.gitmodules` で指定した `facebook/hermes` の `static_h` ブランチの最新commitに更新し、
+固定ブランチ `automation/update-hermes` からデフォルトブランチへのPRを作成します。
+既存のブランチ・PRがある場合は同じものを更新し、PR本文には更新先commitのpermanent linkを記載します。
+差分がなければ新規PRは作成しません。このworkflowでリリースは作成しません。
+
+```sh
+gh workflow run update-hermes.yml
+```
+
+リポジトリの Settings → Actions → General → Workflow permissions で
+**Allow GitHub Actions to create and approve pull requests** を有効にしてください。
+更新PRでもビルドworkflowを自動実行する場合は、`Contents: write` と `Pull requests: write` を持つ
+fine-grained PAT を Actions secret `HERMES_UPDATE_TOKEN` に設定します。
+未設定時は `GITHUB_TOKEN` でPRを作成・更新できますが、そのPRイベントではビルドworkflowは起動しません。
+詳細は [create-pull-request の token 設定](https://github.com/peter-evans/create-pull-request#token) を参照してください。
 
 ## 署名とNotarization
 
