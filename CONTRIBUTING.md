@@ -64,6 +64,36 @@ For a native Ubuntu 24.04 build, install the dependencies listed in
 [docker/Dockerfile.linux](docker/Dockerfile.linux), then run `build.sh`,
 `package.sh`, and `test-package.sh` as above, using the matching Linux archive.
 
+### Windows x64 (experimental)
+
+Install Visual Studio 2022 or later with the C++ x64 build tools and a Windows
+SDK, LLVM/Clang, Ninja, Python 3, Git, and CMake. The build script can use the
+CMake bundled with Visual Studio when it is not on PATH. Run with PowerShell 7:
+
+```powershell
+./scripts/build-windows.ps1
+./scripts/package-windows.ps1
+./scripts/test-package-windows.ps1 dist/static-hermes-dev-windows-x64.tar.gz
+```
+
+The scripts initialize Visual Studio's x64 development environment automatically.
+The compiler and libraries are built using MSVC; generated C is compiled with
+`clang.exe` targeting the same ABI and dynamic CRT. Windows' built-in ICU is used.
+N-API and the upstream test suite are disabled for this CLI build; the Windows
+package test verifies C/IR output, object compilation, native executables, Unicode,
+exceptions, PE architecture, DLL dependencies, and relocation into a directory
+containing spaces and Japanese characters.
+
+Windows output defaults to `.build/windows-x64/` and `dist/`. `BUILD_ROOT`,
+`DIST_DIR`, `BUILD_JOBS`, `PACKAGE_VERSION`, `CMAKE_BIN`, and `PYTHON_BIN` can be
+set through `$env:`. After changing patches or the Hermes revision, use a new
+`BUILD_ROOT` or remove the existing Windows build directory before rebuilding.
+Windows does not implement the Unix scripts' `CLEAN` option.
+
+Install the Microsoft Visual C++ x64 Redistributable on machines that run the
+package or generated executables. Distribution does not bundle Microsoft DLLs.
+ARM64, MinGW, and shared-library execution are outside this initial Windows scope.
+
 ### Build settings
 
 Use `BUILD_ROOT` and `DIST_DIR` to change output locations, `BUILD_JOBS` to set
@@ -135,8 +165,8 @@ The optional `version` input uses `vYYYY.M.D`, without zero-padded months or day
 If omitted, the workflow uses the current date in Japan time. The tag and release
 title are identical; archive versions omit the leading `v`.
 
-The workflow builds and tests macOS and Linux packages for arm64 and x64 on
-native runners. Linux uses the same Docker script as local development.
+The workflow builds and tests macOS and Linux packages for arm64 and x64, plus
+Windows x64, on native runners. Linux uses the same Docker script as local development.
 Metadata, publishing, and Hermes-update jobs use `ubuntu-slim`.
 
 Once all builds pass, the workflow tags the exact parent-repository commit that
