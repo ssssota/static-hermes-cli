@@ -1,24 +1,107 @@
 # static-hermes-cli
 
-Static Hermes の `shermes` と、macOS / Linux ネイティブ実行ファイルの生成に必要な
-ヘッダー・静的ライブラリを、再配置可能な prebuilt toolchain として配布します。
+Prebuilt [Static Hermes](https://github.com/facebook/hermes/tree/static_h)
+toolchains for macOS and Linux. Each release includes `shermes`, headers, and
+static libraries for compiling JavaScript to native executables.
 
-GitHub Releases には次の4種類のアーカイブを公開します。
+## Supported platforms
 
-- `static-hermes-<version>-darwin-arm64.tar.gz`
-- `static-hermes-<version>-darwin-x64.tar.gz`
-- `static-hermes-<version>-linux-arm64.tar.gz`
-- `static-hermes-<version>-linux-x64.tar.gz`
+| Operating system | CPU | Asset suffix |
+| --- | --- | --- |
+| macOS 13 or later | Apple Silicon | `darwin-arm64` |
+| macOS 13 or later | Intel | `darwin-x64` |
+| Ubuntu 24.04 | ARM64 | `linux-arm64` |
+| Ubuntu 24.04 | x86-64 | `linux-x64` |
 
-Hermes は `hermes` サブモジュールの commit に固定し、macOSのRelease buildではXcode 16.4と
-macOS SDK 15.5を使用します。各アーカイブの `manifest.json` に commit、Xcode、SDK、
-対象プラットフォーム、最低macOSバージョンを記録します。現在の最低対応バージョンは
-macOS 13.0 です。
-Linux版は Ubuntu 24.04 / Clang 18 でビルドし、manifest に Ubuntu、glibc、ICU の
-バージョンを記録します。Linux版の動作対象は Ubuntu 24.04（glibc 2.39 / ICU 74）です。
-Alpine Linux（musl）向けのバイナリではありません。
+Linux packages target glibc 2.39 and ICU 74, not musl or Alpine Linux. Install
+the runtime dependencies before running `shermes` on Ubuntu 24.04:
 
-## 含まれるもの
+```sh
+sudo apt-get update
+sudo apt-get install libicu74 libstdc++6
+```
+
+## Installation
+
+Choose either a release asset or mise. Versions use calendar dates: for example,
+release tag `v2026.9.20` contains assets named `static-hermes-2026.9.20-<platform>.tar.gz`.
+
+### Install with mise
+
+Use mise's [GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html) to install binary.
+
+```toml
+[tools]
+"github:ssssota/static-hermes-cli" = { version = "v2026.9.20" }
+```
+
+### Download a release asset
+
+Choose an archive for your platform from
+[GitHub Releases](https://github.com/ssssota/static-hermes-cli/releases), along
+with `SHA256SUMS`. For example, on Apple Silicon macOS:
+
+```sh
+version=2026.9.20
+platform=darwin-arm64
+archive="static-hermes-${version}-${platform}.tar.gz"
+release_url="https://github.com/ssssota/static-hermes-cli/releases/download/v${version}"
+
+curl -fL "${release_url}/${archive}" -o "${archive}"
+curl -fL "${release_url}/SHA256SUMS" -o SHA256SUMS
+awk -v archive="${archive}" '$2 == archive' SHA256SUMS | shasum -a 256 -c -
+
+tar -xzf "${archive}"
+export PATH="$PWD/static-hermes-${version}-${platform}/bin:$PATH"
+shermes --version
+```
+
+Set `version` and `platform` to the release and platform you want. On Linux,
+use `sha256sum -c -` in place of `shasum -a 256 -c -`. Add the extracted `bin/`
+directory to your shell's PATH configuration to keep it available in new sessions.
+
+Keep the entire extracted directory together: `shermes` locates `include/` and
+`lib/` relative to its executable. You can move the directory or symlink
+`bin/shermes` onto your PATH.
+
+## Usage
+
+Create a JavaScript file:
+
+```js
+// hello.js
+print("hello");
+```
+
+Emit C source or inspect the intermediate representation without an external
+C compiler:
+
+```sh
+shermes -O -emit-c -o hello.c hello.js
+shermes -O -dump-ir hello.js >hello.ir
+```
+
+To compile an object file or native executable, install a C compiler:
+
+- **macOS:** Xcode or Command Line Tools (`xcode-select --install`).
+- **Ubuntu 24.04:** `sudo apt-get install clang build-essential libicu-dev`.
+
+```sh
+shermes -O -c -o hello.o hello.js
+shermes -O -static-link -o hello hello.js
+./hello
+```
+
+Use `-static-link` when generating executables. Hermes, JSI, console bindings,
+and Boost.Context are linked statically; their headers and libraries are found
+automatically. Shared Hermes libraries are not included.
+
+This does not produce a fully static executable. macOS binaries still depend on
+system libraries and frameworks; Linux binaries depend on glibc, libstdc++,
+libgcc_s, and ICU. macOS packages are ad-hoc signed, not Developer ID signed or
+notarized.
+
+## Package contents
 
 ```text
 static-hermes-<version>-<platform>/
@@ -35,160 +118,17 @@ static-hermes-<version>-<platform>/
 └── share/licenses/...
 ```
 
-`shermes` は実行中の自身のパスから `../include` と `../lib` を解決します。
-ビルドマシンの Xcode、SDK、Hermes build directory の絶対パスは使いません。
-別ディレクトリへの移動や、`PATH` 上に置いたシンボリックリンクからの起動にも対応します。
+`manifest.json` records the Hermes commit, platform, and build environment.
+Each release's notes link directly to its upstream Hermes commit.
 
-## インストール
+## Contributing
 
-[Releases](https://github.com/ssssota/static-hermes-cli/releases) からCPUに合う
-アーカイブと `SHA256SUMS` を取得し、checksumを検証して展開します。
+See [CONTRIBUTING.md](https://github.com/ssssota/static-hermes-cli/blob/main/CONTRIBUTING.md)
+for local builds, validation, Hermes updates, and release procedures.
 
-```sh
-shasum -a 256 -c SHA256SUMS
-tar -xzf static-hermes-0.1.0-darwin-arm64.tar.gz
-export PATH="$PWD/static-hermes-0.1.0-darwin-arm64/bin:$PATH"
-shermes --version
-```
+## License
 
-macOS の `-emit-c` と `-dump-ir` はアーカイブだけで動作します。
-Linux では実行時に `libicu74` と `libstdc++6` が必要です。
-
-```sh
-shermes -O -emit-c -o app.c app.js
-shermes -O -dump-ir app.js >app.ir
-```
-
-`-c` と `-static-link` は外部Cコンパイラを起動するため、対象Macに Xcode または
-Command Line Tools が必要です。Hermesのヘッダーとライブラリはアーカイブ内のものを
-自動的に使用します。Boost.Contextのパスを `-Wc` で追加する必要はありません。
-Linux で `-c` / `-static-link` を使う場合は、Clang、C/C++ 開発環境、ICU開発用ファイルを
-インストールします（Ubuntu 24.04）:
-
-```sh
-sudo apt-get update
-sudo apt-get install clang build-essential libicu-dev
-```
-
-```sh
-shermes -O -c -o app.o app.js
-shermes -O -static-link -o app app.js
-./app
-```
-
-配布対象は静的リンクモードです。Hermesの動的ライブラリは同梱していないため、
-実行ファイルを生成するときは `-static-link` を指定してください。生成物はHermes runtime、
-JSI、console、Boost.Contextを静的リンクしますが、macOS標準の
-`libSystem`、`libc++`、CoreFoundation、Foundationには動的に依存します。
-Linux では glibc、libstdc++、libgcc_s、ICU に動的に依存します。
-`-static-link` は Hermes runtime の静的リンクを意味し、完全静的バイナリの生成ではありません。
-
-## ローカルビルド
-
-必要なものは macOS、XcodeまたはCommand Line Tools、CMake、Ninja、Python 3、Gitです。
-clone後にHermesサブモジュールも初期化してください。
-
-```sh
-git submodule update --init hermes
-./scripts/build.sh
-PACKAGE_VERSION=0.1.0 ./scripts/package.sh
-./scripts/test-package.sh dist/static-hermes-0.1.0-*.tar.gz
-```
-
-Hermesのサブモジュールのcommitまたはパッチを変更した後は、`CLEAN=1 ./scripts/build.sh`
-を実行します。ビルドはサブモジュールを変更せず、`.build/hermes-src` に展開してから
-配布用パッチを適用します。
-`CMAKE_BIN`、`NINJA_BIN`、`PYTHON_BIN`、`BUILD_JOBS` でローカルのツールと並列数を
-上書きできます。
-
-### Linux（Docker）
-
-Docker があれば macOS / Linux のどちらからでも実行できます。
-
-```sh
-git submodule update --init hermes
-PACKAGE_VERSION=0.1.0 ./scripts/build-linux.sh
-```
-
-`hermes` サブモジュールと親リポジトリ（Git metadataを含む）を読み取り専用でマウントし、
-コンテナ内でビルド・パッケージ作成・再配置テストを行います。
-成果物は `dist/`、ビルドキャッシュは `.build/linux-arm64/` または `.build/linux-x64/`
-に保存します。サブモジュールの未コミット変更はビルドには含まれません。
-
-デフォルトは Docker ホストのCPUアーキテクチャです。別CPU向けには次のように指定します。
-Docker 側で対象アーキテクチャのエミュレーションが必要で、ビルドには時間がかかります。
-
-```sh
-DOCKER_PLATFORM=linux/amd64 PACKAGE_VERSION=0.1.0 ./scripts/build-linux.sh
-DOCKER_PLATFORM=linux/arm64 PACKAGE_VERSION=0.1.0 ./scripts/build-linux.sh
-```
-
-`BUILD_ROOT`、`DIST_DIR`、`BUILD_JOBS`、`CLEAN=1` も使用できます。
-Ubuntu 24.04 上で直接ビルドする場合は、`docker/Dockerfile.linux` に記載した依存パッケージを
-インストールして、macOSと同じ `build.sh` → `package.sh` → `test-package.sh` を実行できます。
-
-## リリース
-
-Actions の **Build and release** を `workflow_dispatch` で実行するとリリースします。
-`version` は `v2026.9.20` の形式で指定し、未指定なら日本時間の実行日を使います。
-月・日はゼロ埋めしません。タグとリリースタイトルはともに `v2026.9.20`、
-アーカイブのバージョンは `2026.9.20` になります。
-
-GitHub Actionsが macOS / Linux の arm64 / x64 を
-それぞれネイティブrunnerでビルドします。Linux job はローカルと同じ `build-linux.sh` を
-Docker 上で実行します。各アーカイブは次を実行してからReleaseへ公開されます。
-
-- 別パスへ移動したtoolchainで `--version`、`-emit-c`、`-dump-ir`、`-c` を確認
-- `-static-link` で実行ファイルを生成し、その実行結果を確認
-- Unicode正規化、配列処理、例外処理の実行結果を確認
-- macOS は `otool -L`、Linux は `ldd` / `readelf` で共有ライブラリ依存と検索パスを確認
-- アーキテクチャ、SHA-256、macOS の ad-hocコード署名を確認
-
-```sh
-gh workflow run build.yml --ref main -f version=v2026.9.20
-```
-
-全プラットフォームのテスト成功後、実際にビルドした親リポジトリのcommitにタグを作成します。
-Release note は `https://github.com/facebook/hermes/commit/<commit SHA>` のみで、
-ビルドに使用したHermesのcommitへのpermanent linkです。自動生成の変更履歴は使いません。
-同じタグ・同じcommitでの再実行はアセット・タイトル・noteを更新します。
-同じ日付のタグが別commitを指している場合はエラーにして、タグを移動しません。
-
-tag push ではworkflowを起動しません。`main` へのpushとpull requestはビルド・検証のみ行い、
-リリースは作成しません。
-
-## Hermesの更新
-
-**Update Hermes** は毎日09:00（日本時間）と `workflow_dispatch` で実行します。
-`.gitmodules` で指定した `facebook/hermes` の `static_h` ブランチの最新commitに更新し、
-固定ブランチ `automation/update-hermes` からデフォルトブランチへのPRを作成します。
-既存のブランチ・PRがある場合は同じものを更新し、PR本文には更新先commitのpermanent linkを記載します。
-差分がなければ新規PRは作成しません。このworkflowでリリースは作成しません。
-
-```sh
-gh workflow run update-hermes.yml
-```
-
-リポジトリの Settings → Actions → General → Workflow permissions で
-**Allow GitHub Actions to create and approve pull requests** を有効にしてください。
-更新PRでもビルドworkflowを自動実行する場合は、`Contents: write` と `Pull requests: write` を持つ
-fine-grained PAT を Actions secret `HERMES_UPDATE_TOKEN` に設定します。
-未設定時は `GITHUB_TOKEN` でPRを作成・更新できますが、そのPRイベントではビルドworkflowは起動しません。
-詳細は [create-pull-request の token 設定](https://github.com/peter-evans/create-pull-request#token) を参照してください。
-
-## 署名とNotarization
-
-現在のmacOS公開物は ad-hoc 署名です。Developer ID署名とApple Notary Serviceへの提出には
-配布者の証明書と認証情報が必要なため、このリポジトリの標準workflowには含めていません。
-一般公開時にGatekeeper警告をなくす場合は、証明書をGitHub Actions secretsで管理する
-署名・Notarization jobを追加してください。
-
-## 対象外
-
-- Linuxでの完全静的リンク、musl / Alpine Linux向けビルド
-- lean VM（このHermes revisionではconsole bindingとの組み合わせが未対応）
-- macOS SDKやclangそのものの同梱
-- Hermesの共有ライブラリを使う動的リンク配布
-
-Hermes本体はMIT Licenseです。配布アーカイブにはHermesと、静的リンクされる第三者
-コンポーネントのライセンス／noticeを同梱します。
+This project and Hermes are MIT-licensed. See
+[LICENSE](https://github.com/ssssota/static-hermes-cli/blob/main/LICENSE).
+Packages include licenses and notices for bundled third-party components in
+`share/licenses/`.
